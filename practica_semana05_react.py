@@ -2,11 +2,6 @@
 Práctica Calificada de Laboratorio N° 05 — Agentes Inteligentes
 Motor Agéntico ReAct: Razonamiento, Herramientas, Self-Healing y Parseo Robusto
 
-Uso:
-    python practica_semana05_react.py                 # demos contra Gemini (google-genai)
-    python practica_semana05_react.py "pregunta"      # pregunta libre contra Gemini
-    python practica_semana05_react.py --test          # pruebas deterministas (sin API)
-
 Requisitos:
     pip install google-genai
     export GEMINI_API_KEY="tu_clave"   # https://aistudio.google.com/apikey
