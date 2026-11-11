@@ -10,7 +10,7 @@ Uso:
 Requisitos:
     pip install google-genai
     export GEMINI_API_KEY="tu_clave"   # https://aistudio.google.com/apikey
-    (opcional) export GEMINI_MODEL="gemini-2.5-flash"
+    (opcional) export GEMINI_MODEL="gemini-3.5-flash"
 """
 
 import re
@@ -24,7 +24,7 @@ import datetime
 from typing import Dict, Any, Tuple, Optional, List
 
 STOP_SEQUENCES = ["Observation:"]
-MODELO_POR_DEFECTO = "gemini-2.5-flash"
+MODELO_POR_DEFECTO = "gemini-3.5-flash"
 
 # ==========================================
 # 1. CATÁLOGO DE HERRAMIENTAS Y SIMULACIÓN
@@ -92,7 +92,7 @@ No se pudo inicializar Gemini (google-genai). Pasos:
 
 def cargar_env_local(ruta: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")) -> None:
     """Carga variables KEY=VALUE de un .env local (si existe) sin sobrescribir las del entorno."""
-    if not os.path.exists(ruta):
+    if not os.path.isfile(ruta):  # si no existe o es una carpeta, se ignora
         return
     with open(ruta, encoding="utf-8") as f:
         for linea in f:
@@ -106,7 +106,7 @@ def cargar_env_local(ruta: str = os.path.join(os.path.dirname(os.path.abspath(__
 class ClienteLLMGemini:
     """Cliente real con el SDK oficial google-genai. Pausa la generación en 'Observation:'."""
 
-    def __init__(self, modelo: Optional[str] = None, max_reintentos: int = 4):
+    def __init__(self, modelo: Optional[str] = None, max_reintentos: int = 3):
         cargar_env_local()
         try:
             from google import genai
@@ -120,6 +120,7 @@ class ClienteLLMGemini:
         self.client = genai.Client()
         self.modelo = modelo or os.environ.get("GEMINI_MODEL", MODELO_POR_DEFECTO)
         self.max_reintentos = max_reintentos
+        self.cuota_diaria_agotada = False
 
     def generar(self, system_prompt: str, historial: str, stop_sequences: List[str]) -> str:
         config = self._types.GenerateContentConfig(
@@ -128,7 +129,10 @@ class ClienteLLMGemini:
             temperature=0.0,
             max_output_tokens=2048,
         )
-        espera = 5
+        if self.cuota_diaria_agotada:
+            raise RuntimeError(f"Cuota diaria gratuita agotada para {self.modelo}; "
+                               "usa otro modelo con GEMINI_MODEL o intenta mañana.")
+        espera = 10
         for intento in range(1, self.max_reintentos + 1):
             try:
                 resp = self.client.models.generate_content(
@@ -136,9 +140,14 @@ class ClienteLLMGemini:
                 )
                 return resp.text or ""
             except self._errors.APIError as e:
-                # 429 (cuota) / 5xx: reintentar con backoff; otros errores se propagan.
-                if getattr(e, "code", None) in (429, 500, 503) and intento < self.max_reintentos:
-                    print(f"   [API] Error {e.code}; reintentando en {espera}s...")
+                codigo = getattr(e, "code", None)
+                if codigo == 429 and "PerDay" in str(e):
+                    # Cuota diaria: reintentar solo gastaría más solicitudes.
+                    self.cuota_diaria_agotada = True
+                    raise
+                # 429 por minuto / 5xx transitorios: reintento corto con espera creciente.
+                if codigo in (429, 500, 503) and intento < self.max_reintentos:
+                    print(f"   [API] Error {codigo}; reintentando en {espera}s...")
                     time.sleep(espera)
                     espera *= 2
                     continue
@@ -309,7 +318,7 @@ Herramientas disponibles:
             return f"Observation: [ÉXITO] {resultado}"
         except Exception as e:  # KeyError, ValueError, TypeError, cualquier otra
             mensaje = e.args[0] if isinstance(e, KeyError) and e.args else str(e)
-            return f"Observation: [ERROR DE EJECUCIÓN] {type(e).__name__}: {mensaje}. {sufijo}"
+            return f"Observation: [ERROR DE EJECUCIÓN] {type(e).__name__}: {str(mensaje).rstrip('.')}. {sufijo}"
 
     # ---------- Bucle ReAct ----------
     def ejecutar_bucle_react(self, pregunta_usuario: str) -> str:
